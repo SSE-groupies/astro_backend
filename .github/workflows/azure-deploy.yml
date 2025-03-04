@@ -8,13 +8,22 @@ on:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    environment: development
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v2
+    
+    - name: Cache Docker layers
+      uses: actions/cache@v3
+      with:
+        path: /tmp/.buildx-cache
+        key: ${{ runner.os }}-buildx-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-buildx-
       
     - name: Login to GitHub Container Registry
       uses: docker/login-action@v2
@@ -32,6 +41,16 @@ jobs:
           type=ref,event=branch
           type=sha,format=short
           type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+          
+    - name: Scan Dockerfile
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'config'
+        hide-progress: false
+        format: 'table'
+        exit-code: '1'
+        ignore-unfixed: true
+        severity: 'CRITICAL,HIGH'
         
     - name: Build and push
       uses: docker/build-push-action@v4
@@ -42,8 +61,23 @@ jobs:
         platforms: linux/amd64
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+        cache-from: type=local,src=/tmp/.buildx-cache
+        cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+        
+    - name: Move cache
+      run: |
+        rm -rf /tmp/.buildx-cache
+        mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+        
+    - name: Scan container image
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ steps.meta.outputs.tags }}
+        format: 'table'
+        exit-code: '1'
+        ignore-unfixed: true
+        vuln-type: 'os,library'
+        severity: 'CRITICAL,HIGH'
         
     - name: Login to Azure
       uses: azure/login@v1
@@ -51,6 +85,7 @@ jobs:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
         
     - name: Deploy to Azure Container App
+      id: deploy
       uses: azure/CLI@v1
       with:
         inlineScript: |
@@ -102,6 +137,13 @@ jobs:
               --location "$LOCATION"
           fi
           
+          # Store current image for potential rollback
+          CURRENT_IMAGE=""
+          if az containerapp show --name "$APP_NAME" --resource-group "$RG" --query "properties.template.containers[0].image" -o tsv 2>/dev/null; then
+            CURRENT_IMAGE=$(az containerapp show --name "$APP_NAME" --resource-group "$RG" --query "properties.template.containers[0].image" -o tsv)
+            echo "Current image: $CURRENT_IMAGE"
+          fi
+          
           # Check if container app exists
           echo "Checking if container app '$APP_NAME' exists..."
           if az containerapp show --name "$APP_NAME" --resource-group "$RG" --query "name" -o tsv 2>/dev/null; then
@@ -119,7 +161,18 @@ jobs:
                 "REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}" \
                 "REDIS_SSL=true" \
                 "API_CORS_ORIGINS=${{ secrets.API_CORS_ORIGINS }}" \
-                "ADMIN_API_KEY=${{ secrets.ADMIN_API_KEY }}"
+                "ADMIN_API_KEY=${{ secrets.ADMIN_API_KEY }}" \
+              --target-port 8080 \
+              --ingress external \
+              --min-replicas 1 \
+              --max-replicas 3 \
+              --cpu 0.5 \
+              --memory 1.0Gi \
+              --probe-path /health \
+              --probe-protocol HTTP \
+              --probe-interval 30 \
+              --probe-timeout 10 \
+              --probe-retries 3
           else
             echo "Creating new container app..."
             az containerapp create \
@@ -142,10 +195,48 @@ jobs:
                 "REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}" \
                 "REDIS_SSL=true" \
                 "API_CORS_ORIGINS=${{ secrets.API_CORS_ORIGINS }}" \
-                "ADMIN_API_KEY=${{ secrets.ADMIN_API_KEY }}"
+                "ADMIN_API_KEY=${{ secrets.ADMIN_API_KEY }}" \
+              --probe-path /health \
+              --probe-protocol HTTP \
+              --probe-interval 30 \
+              --probe-timeout 10 \
+              --probe-retries 3
           fi
           
-          # Output the container app URL
-          echo "Getting container app URL..."
+          # Get and store the app URL
           APP_URL=$(az containerapp show --name "$APP_NAME" --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv)
-          echo "Container App URL: $APP_URL" 
+          echo "Container App URL: $APP_URL"
+          echo "app_url=$APP_URL" >> $GITHUB_OUTPUT
+          
+    - name: Health check
+      id: health_check
+      run: |
+        APP_URL="${{ steps.deploy.outputs.app_url }}"
+        MAX_RETRIES=30
+        RETRY_INTERVAL=10
+        
+        for i in $(seq 1 $MAX_RETRIES); do
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://$APP_URL/health")
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "Health check passed!"
+            exit 0
+          fi
+          echo "Attempt $i/$MAX_RETRIES: Health check failed with status $HTTP_STATUS. Retrying in ${RETRY_INTERVAL}s..."
+          sleep $RETRY_INTERVAL
+        done
+        
+        echo "Health check failed after $MAX_RETRIES attempts"
+        exit 1
+        
+    - name: Rollback on failure
+      if: failure() && steps.deploy.outcome == 'failure'
+      uses: azure/CLI@v1
+      with:
+        inlineScript: |
+          if [ ! -z "$CURRENT_IMAGE" ]; then
+            echo "Rolling back to previous image: $CURRENT_IMAGE"
+            az containerapp update \
+              --name "${{ secrets.AZURE_CONTAINER_APP }}" \
+              --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
+              --image "$CURRENT_IMAGE"
+          fi 
