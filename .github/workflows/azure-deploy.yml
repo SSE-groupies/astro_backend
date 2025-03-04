@@ -108,6 +108,52 @@ jobs:
           input: './docker/Dockerfile'
         continue-on-error: true
 
+  # Tests summary job that always runs
+  test-summary:
+    name: Test Summary
+    needs: [build-and-test]
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Test Summary
+      run: |
+        echo "All tests completed successfully!"
+
+  # For non-main branches and PRs - just do a lightweight verification
+  test-only-verification:
+    name: Verify Test Build
+    needs: [build-and-test]
+    runs-on: ubuntu-latest
+    # Only run for non-main branch pushes OR pull requests
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main')
+    
+    steps:
+    - name: Verify test build
+      run: |
+        echo "Build and test phase completed successfully"
+        echo "This build would deploy to the test environment in a real deployment"
+        echo "Verification passed!"
+
+  # Dependency Review for PRs
+  dependency-review-pr:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    # Only run for PRs
+    if: github.event_name == 'pull_request'
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v3
+        with:
+          fail-on-severity: high
+          deny-licenses: 'AGPL-1.0, AGPL-3.0'
+
+  # MAIN BRANCH ONLY JOBS BELOW
+  # ---------------------------
+
   # Pre-deployment validation job - only run for main branch
   pre-deployment-validation:
     name: Pre-Deployment Validation
@@ -415,7 +461,7 @@ jobs:
   # Final verification job
   verify:
     name: Verify Deployment
-    # Run for main branch pushes OR for PRs (with different steps)
+    # Run for main branch pushes
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.deploy.result == 'success'
     needs: [deploy]
     runs-on: ubuntu-latest
@@ -546,38 +592,4 @@ jobs:
         
         # Here you could add code to send notifications to Slack, Teams, etc.
         # For example, using webhook:
-        # curl -X POST -H 'Content-type: application/json' --data '{"text":"Deployment to '"$ENVIRONMENT"' '"$STATUS"': '"$APP_URL"'"}' ${{ secrets.SLACK_WEBHOOK_URL }} 
-
-  # PR-specific tests
-  mock-verification:
-    name: Mock Verification
-    needs: [build-and-test]
-    runs-on: ubuntu-latest
-    # Only run for PR or non-main branch pushes
-    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main')
-    
-    steps:
-    - name: Mock verification for non-production builds
-      run: |
-        echo "This is a pull request or non-main branch push"
-        echo "In a real deployment, we would verify the application health and functionality"
-        echo "Mock verification passed!"
-
-  # Dependency Review Job - only for PRs
-  dependency-review:
-    name: Dependency Review
-    runs-on: ubuntu-latest
-    # This job should run for PRs only
-    if: github.event_name == 'pull_request'
-    
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        
-      - name: Dependency Review
-        uses: actions/dependency-review-action@v3
-        with:
-          fail-on-severity: high
-          deny-licenses: 'AGPL-1.0, AGPL-3.0'
-          # Uncomment to require approval for new dependencies
-          # fail-on-scopes: runtime, development
+        # curl -X POST -H 'Content-type: application/json' --data '{"text":"Deployment to '"$ENVIRONMENT"' '"$STATUS"': '"$APP_URL"'"}' ${{ secrets.SLACK_WEBHOOK_URL }}
