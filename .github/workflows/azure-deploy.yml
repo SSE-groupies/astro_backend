@@ -1,13 +1,5 @@
 name: Azure Container App Deployment
 
-# Environment Protection Rules:
-# To set up manual approvals for production deployments:
-# 1. Go to your repository settings > Environments
-# 2. Create a 'production' environment if it doesn't exist
-# 3. Under "Environment protection rules", enable "Required reviewers"
-# 4. Add the required reviewers who can approve production deployments
-# 5. Optionally, add deployment branches rule to limit production deployments to specific branches
-
 on:
   push:
     branches: [ main ]
@@ -278,8 +270,9 @@ jobs:
       id: get_current_image
       continue-on-error: true
       run: |
-        RG="${{ needs.prepare-environment.outputs.resource_group }}"
-        APP_NAME="${{ needs.prepare-environment.outputs.app_name }}"
+        # Use secrets directly instead of outputs from prepare-environment
+        RG="${{ secrets.AZURE_RESOURCE_GROUP }}"
+        APP_NAME="${{ secrets.AZURE_CONTAINER_APP }}"
         
         if az containerapp show --name "$APP_NAME" --resource-group "$RG" --query "properties.template.containers[0].image" -o tsv 2>/dev/null; then
           CURRENT_IMAGE=$(az containerapp show --name "$APP_NAME" --resource-group "$RG" --query "properties.template.containers[0].image" -o tsv)
@@ -295,9 +288,10 @@ jobs:
       with:
         inlineScript: |
           set -o pipefail  # Ensure pipe failures are properly caught
-          RG="${{ needs.prepare-environment.outputs.resource_group }}"
-          ENV_NAME="${{ needs.prepare-environment.outputs.env_name }}"
-          APP_NAME="${{ needs.prepare-environment.outputs.app_name }}"
+          # Use secrets directly instead of outputs from prepare-environment
+          RG="${{ secrets.AZURE_RESOURCE_GROUP }}"
+          ENV_NAME="${{ secrets.AZURE_CONTAINER_ENV }}"
+          APP_NAME="${{ secrets.AZURE_CONTAINER_APP }}"
           
           # Function to log errors and save them
           log_error() {
@@ -305,6 +299,11 @@ jobs:
             echo "error_message=$1" >> $GITHUB_OUTPUT
             echo "$1" > /tmp/deployment_error.log
           }
+          
+          # Debug - Print the values we're using (masking sensitive info)
+          echo "Using Resource Group: $RG"
+          echo "Using Environment: $ENV_NAME"
+          echo "Using App Name: $APP_NAME"
           
           # Get the first image tag - handle multiline output safely
           IMAGE_TAG=$(echo "${{ needs.build-and-test.outputs.image_tag }}" | head -n 1)
@@ -414,14 +413,43 @@ jobs:
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}
     
     steps:
+    - name: Determine App URL
+      id: get_app_url
+      if: github.event_name != 'pull_request'
+      run: |
+        # Try to get the app URL from the deploy job outputs first
+        DEPLOY_APP_URL="${{ needs.deploy.outputs.app_url }}"
+        
+        # If empty, try to get it directly
+        if [ -z "$DEPLOY_APP_URL" ]; then
+          echo "Deploy job output URL is empty, getting URL directly"
+          RG="${{ secrets.AZURE_RESOURCE_GROUP }}"
+          APP_NAME="${{ secrets.AZURE_CONTAINER_APP }}"
+          
+          # Get the app URL directly using Azure CLI
+          APP_URL=$(az containerapp show --name "$APP_NAME" --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null)
+          if [ -n "$APP_URL" ]; then
+            echo "Retrieved App URL directly: $APP_URL"
+            echo "app_url=$APP_URL" >> $GITHUB_OUTPUT
+          else
+            echo "Warning: Could not retrieve App URL"
+            echo "app_url=missing" >> $GITHUB_OUTPUT
+          fi
+        else
+          echo "Using App URL from deploy job: $DEPLOY_APP_URL"
+          echo "app_url=$DEPLOY_APP_URL" >> $GITHUB_OUTPUT
+        fi
+        
     - name: Health check
       id: health_check
       # Skip the actual verification for PRs
-      if: github.event_name != 'pull_request'
+      if: github.event_name != 'pull_request' && steps.get_app_url.outputs.app_url != 'missing'
       run: |
-        APP_URL="${{ needs.deploy.outputs.app_url }}"
+        APP_URL="${{ steps.get_app_url.outputs.app_url }}"
         MAX_RETRIES=30
         RETRY_INTERVAL=10
+        
+        echo "Verifying app at URL: $APP_URL"
         
         # Check basic health endpoint first
         echo "Checking basic health endpoint..."
@@ -467,9 +495,9 @@ jobs:
         echo "Mock verification passed!"
     
     - name: Functional verification
-      if: github.event_name != 'pull_request'
+      if: github.event_name != 'pull_request' && steps.get_app_url.outputs.app_url != 'missing'
       run: |
-        APP_URL="${{ needs.deploy.outputs.app_url }}"
+        APP_URL="${{ steps.get_app_url.outputs.app_url }}"
         
         # Add additional functional verification here
         echo "Running post-deployment functional tests..."
@@ -494,8 +522,12 @@ jobs:
         
         echo "Deployment Status: $STATUS"
         if [ "${{ github.event_name }}" != "pull_request" ]; then
-          APP_URL="${{ needs.deploy.outputs.app_url }}"
-          echo "App URL: $APP_URL"
+          if [ -n "${{ steps.get_app_url.outputs.app_url }}" ] && [ "${{ steps.get_app_url.outputs.app_url }}" != "missing" ]; then
+            APP_URL="${{ steps.get_app_url.outputs.app_url }}"
+            echo "App URL: $APP_URL"
+          else
+            echo "App URL not available"
+          fi
         else
           echo "This was a PR verification - no deployment performed"
         fi
