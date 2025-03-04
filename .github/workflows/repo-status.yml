@@ -1,0 +1,122 @@
+name: Repository Status Check
+
+on:
+  schedule:
+    - cron: '0 0 * * 1' # Run at midnight on Monday
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  repo-health:
+    name: Repository Health Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Check for broken internal links in markdown
+      run: |
+        echo "Checking for broken internal links in markdown files..."
+        find . -name "*.md" -type f -print0 | xargs -0 grep -l "\[.*\](.*)" | while read file; do
+          echo "Checking $file"
+          grep -o "\[.*\]([^http].*)" "$file" | while read link; do
+            target=$(echo "$link" | sed -E 's/\[.*\]\((.*)\)/\1/')
+            if [[ "$target" != "#"* && ! -f "$target" ]]; then
+              echo "Broken link in $file: $target"
+            fi
+          done
+        done
+        
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        
+    - name: Check for outdated dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pip-outdated
+        
+        echo "Checking for outdated dependencies..."
+        if [ -f requirements.txt ]; then
+          # Print a report of outdated dependencies
+          pip-outdated requirements.txt || true
+        else
+          echo "No requirements.txt file found"
+        fi
+        
+  stale-prs:
+    name: Check for Stale PRs
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Check for stale PRs
+      uses: actions/stale@v8
+      with:
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+        stale-pr-message: 'This PR is stale because it has been open for 30 days with no activity. Remove stale label or comment or this will be closed in 10 days.'
+        stale-pr-label: 'stale'
+        exempt-pr-labels: 'dependencies,security'
+        days-before-pr-stale: 30
+        days-before-pr-close: 10
+        operations-per-run: 30
+        # Only mark PRs as stale, not issues
+        days-before-issue-stale: -1
+        days-before-issue-close: -1
+        
+  dependency-updates:
+    name: Check for Dependency Updates
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        
+    - name: Run pip-audit for Python dependencies
+      run: |
+        pip install pip-audit
+        pip-audit || true
+        
+    - name: Send notification on critical dependencies
+      if: failure()
+      run: |
+        echo "Critical security vulnerabilities found in dependencies!"
+        # Add notification code here (webhook, etc.)
+        
+  summary:
+    name: Repository Status Summary
+    needs: [repo-health, stale-prs, dependency-updates]
+    if: always()
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Create status summary
+      run: |
+        echo "# Repository Status Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Repository Health
+        if [ "${{ needs.repo-health.result }}" == "success" ]; then
+          echo "✅ Repository health check passed" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Repository health check failed" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        # Stale PRs
+        if [ "${{ needs.stale-prs.result }}" == "success" ]; then
+          echo "✅ Stale PR check completed" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Stale PR check failed" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        # Dependency Updates
+        if [ "${{ needs.dependency-updates.result }}" == "success" ]; then
+          echo "✅ Dependency checks passed" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "⚠️ Potential dependency issues found" >> $GITHUB_STEP_SUMMARY
+        fi 
