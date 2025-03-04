@@ -2,6 +2,9 @@ import contextlib
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
+import os
+import socket
+import platform
 
 from src.config.settings import settings
 from src.db.azure_tables import init_tables
@@ -52,16 +55,31 @@ if settings.ENVIRONMENT != "production":
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup actions
-    logger.info(f"Starting up {settings.PROJECT_NAME} v{settings.VERSION}")
-    logger.info(f"Environment: {settings.ENVIRONMENT}")
-    
-    # Initialize tables
-    init_tables()
-    
-    # Initialize Redis
-    await init_redis()
-    
-    logger.info("Initialization complete")
+    try:
+        logger.info(f"Starting up {settings.PROJECT_NAME} v{settings.VERSION}")
+        logger.info(f"Environment: {settings.ENVIRONMENT}")
+        
+        # Log Azure-specific information if in Azure environment
+        hostname = socket.gethostname()
+        if os.environ.get("WEBSITE_SITE_NAME") or os.environ.get("CONTAINER_APP_NAME"):
+            logger.info(f"Running in Azure environment")
+            logger.info(f"Container hostname: {hostname}")
+            logger.info(f"Python version: {platform.python_version()}")
+            logger.info(f"Platform: {platform.platform()}")
+        
+        # Initialize tables
+        init_tables()
+        
+        # Initialize Redis
+        await init_redis()
+        
+        # Verify required settings
+        settings.verify_required_settings()
+        
+        logger.info("Initialization complete")
+    except Exception as e:
+        logger.error(f"Error during startup: {str(e)}")
+        # Continue startup even if there are issues - health checks will report the problems
     
     yield
     
