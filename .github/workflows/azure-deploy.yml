@@ -2,7 +2,7 @@ name: Azure Container App Deployment
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, test-deployment ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -19,7 +19,7 @@ jobs:
 
     outputs:
       # We need to conditionally skip deployments for pull requests
-      should_deploy: ${{ github.event_name != 'pull_request' }}
+      should_deploy: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
       image_tag: ${{ steps.meta.outputs.tags }}
       
     steps:
@@ -108,12 +108,13 @@ jobs:
           input: './docker/Dockerfile'
         continue-on-error: true
 
-  # Pre-deployment validation job
+  # Pre-deployment validation job - only run for main branch
   pre-deployment-validation:
     name: Pre-Deployment Validation
     needs: build-and-test
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request'
+    # Only run for main branch pushes, not PRs or other branches
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     
     steps:
     - name: Checkout code
@@ -163,14 +164,14 @@ jobs:
         echo "All required secrets are available."
         echo "Pre-deployment validation passed!"
 
-  # Environment setup job
+  # Environment setup job - only run for main branch
   prepare-environment:
     name: Prepare Azure Environment
     needs: pre-deployment-validation
-    # Skip this job for pull requests
-    if: github.event_name != 'pull_request'
+    # Only run for main branch pushes
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}
+    environment: production
     outputs:
       resource_group: ${{ steps.set_variables.outputs.resource_group }}
       location: ${{ steps.set_variables.outputs.location }}
@@ -249,14 +250,14 @@ jobs:
               --location "$LOCATION"
           fi
 
-  # Main deployment job
+  # Main deployment job - only run for main branch
   deploy:
     name: Deploy Container App
     needs: [prepare-environment, build-and-test]
-    # Skip this job for pull requests
-    if: github.event_name != 'pull_request'
+    # Only run for main branch pushes
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}
+    environment: production
     outputs:
       app_url: ${{ steps.deploy.outputs.app_url }}
       
@@ -332,9 +333,9 @@ jobs:
               --resource-group "$RG" \
               --image "$IMAGE_TAG" \
               --set-env-vars \
-                "ENVIRONMENT=${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}" \
+                "ENVIRONMENT=production" \
                 "PORT=8080" \
-                "AZURE_STORAGE_USE_MANAGED_IDENTITY=${{ github.ref == 'refs/heads/main' && 'true' || 'false' }}" \
+                "AZURE_STORAGE_USE_MANAGED_IDENTITY=true" \
                 "AZURE_STORAGE_ACCOUNT_URL=${{ secrets.AZURE_STORAGE_ACCOUNT_URL }}" \
                 "AZURE_STORAGE_CONNECTION_STRING=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}" \
                 "REDIS_HOST=${{ secrets.REDIS_HOST }}" \
@@ -378,9 +379,9 @@ jobs:
               --cpu 0.5 \
               --memory 1.0Gi \
               --env-vars \
-                "ENVIRONMENT=${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}" \
+                "ENVIRONMENT=production" \
                 "PORT=8080" \
-                "AZURE_STORAGE_USE_MANAGED_IDENTITY=${{ github.ref == 'refs/heads/main' && 'true' || 'false' }}" \
+                "AZURE_STORAGE_USE_MANAGED_IDENTITY=true" \
                 "AZURE_STORAGE_ACCOUNT_URL=${{ secrets.AZURE_STORAGE_ACCOUNT_URL }}" \
                 "AZURE_STORAGE_CONNECTION_STRING=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}" \
                 "REDIS_HOST=${{ secrets.REDIS_HOST }}" \
@@ -414,22 +415,20 @@ jobs:
   # Final verification job
   verify:
     name: Verify Deployment
-    needs: [build-and-test, deploy]
-    # For PRs, only depend on build-and-test
-    if: ${{ (github.event_name != 'pull_request' && needs.deploy.result == 'success') || (github.event_name == 'pull_request' && needs.build-and-test.result == 'success') }}
+    # Run for main branch pushes OR for PRs (with different steps)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.deploy.result == 'success'
+    needs: [deploy]
     runs-on: ubuntu-latest
-    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}
+    environment: production
     
     steps:
-    - name: Login to Azure (for non-PR builds)
-      if: github.event_name != 'pull_request'
+    - name: Login to Azure
       uses: azure/login@v1
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
     
     - name: Determine App URL
       id: get_app_url
-      if: github.event_name != 'pull_request'
       run: |
         # Try to get the app URL from the deploy job outputs first
         DEPLOY_APP_URL="${{ needs.deploy.outputs.app_url }}"
@@ -456,8 +455,7 @@ jobs:
         
     - name: Health check
       id: health_check
-      # Skip the actual verification for PRs
-      if: github.event_name != 'pull_request' && steps.get_app_url.outputs.app_url != 'missing'
+      if: steps.get_app_url.outputs.app_url != 'missing'
       run: |
         APP_URL="${{ steps.get_app_url.outputs.app_url }}"
         MAX_RETRIES=10
@@ -511,16 +509,8 @@ jobs:
         echo "Readiness check failed after 5 attempts"
         exit 1
     
-    # For PRs, run a mock verification step
-    - name: Mock verification for PRs
-      if: github.event_name == 'pull_request'
-      run: |
-        echo "This is a pull request, so we're running a mock verification"
-        echo "In a real deployment, we would verify the application health and functionality"
-        echo "Mock verification passed!"
-    
     - name: Functional verification
-      if: github.event_name != 'pull_request' && steps.get_app_url.outputs.app_url != 'missing'
+      if: steps.get_app_url.outputs.app_url != 'missing'
       run: |
         APP_URL="${{ steps.get_app_url.outputs.app_url }}"
         
@@ -543,21 +533,51 @@ jobs:
       if: always()
       run: |
         STATUS="${{ job.status }}"
-        ENVIRONMENT="${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}"
+        ENVIRONMENT="production"
         
         echo "Deployment Status: $STATUS"
-        if [ "${{ github.event_name }}" != "pull_request" ]; then
-          if [ -n "${{ steps.get_app_url.outputs.app_url }}" ] && [ "${{ steps.get_app_url.outputs.app_url }}" != "missing" ]; then
-            APP_URL="${{ steps.get_app_url.outputs.app_url }}"
-            echo "App URL: $APP_URL"
-          else
-            echo "App URL not available"
-          fi
+        if [ -n "${{ steps.get_app_url.outputs.app_url }}" ] && [ "${{ steps.get_app_url.outputs.app_url }}" != "missing" ]; then
+          APP_URL="${{ steps.get_app_url.outputs.app_url }}"
+          echo "App URL: $APP_URL"
         else
-          echo "This was a PR verification - no deployment performed"
+          echo "App URL not available"
         fi
         echo "Environment: $ENVIRONMENT"
         
         # Here you could add code to send notifications to Slack, Teams, etc.
         # For example, using webhook:
         # curl -X POST -H 'Content-type: application/json' --data '{"text":"Deployment to '"$ENVIRONMENT"' '"$STATUS"': '"$APP_URL"'"}' ${{ secrets.SLACK_WEBHOOK_URL }} 
+
+  # PR-specific tests
+  mock-verification:
+    name: Mock Verification
+    needs: [build-and-test]
+    runs-on: ubuntu-latest
+    # Only run for PR or non-main branch pushes
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main')
+    
+    steps:
+    - name: Mock verification for non-production builds
+      run: |
+        echo "This is a pull request or non-main branch push"
+        echo "In a real deployment, we would verify the application health and functionality"
+        echo "Mock verification passed!"
+
+  # Dependency Review Job - only for PRs
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    # This job should run for PRs only
+    if: github.event_name == 'pull_request'
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v3
+        with:
+          fail-on-severity: high
+          deny-licenses: 'AGPL-1.0, AGPL-3.0'
+          # Uncomment to require approval for new dependencies
+          # fail-on-scopes: runtime, development
