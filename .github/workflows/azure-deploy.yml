@@ -6,9 +6,12 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-deploy:
+  build:
+    name: Build and Test
     runs-on: ubuntu-latest
     environment: development
+    outputs:
+      image_tags: ${{ steps.meta.outputs.tags }}
     
     steps:
     - name: Checkout code
@@ -78,43 +81,60 @@ jobs:
         ignore-unfixed: true
         vuln-type: 'os,library'
         severity: 'CRITICAL,HIGH'
-        
+
+  prepare-environment:
+    name: Prepare Azure Environment
+    needs: build
+    runs-on: ubuntu-latest
+    environment: development
+    outputs:
+      resource_group: ${{ steps.set_variables.outputs.resource_group }}
+      location: ${{ steps.set_variables.outputs.location }}
+      env_name: ${{ steps.set_variables.outputs.env_name }}
+      app_name: ${{ steps.set_variables.outputs.app_name }}
+      
+    steps:
     - name: Login to Azure
       uses: azure/login@v1
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
         
-    - name: Deploy to Azure Container App
-      id: deploy
+    - name: Set environment variables
+      id: set_variables
+      run: |
+        RG="${{ secrets.AZURE_RESOURCE_GROUP }}"
+        LOCATION="${{ secrets.AZURE_LOCATION }}"
+        ENV_NAME="${{ secrets.AZURE_CONTAINER_ENV }}"
+        APP_NAME="${{ secrets.AZURE_CONTAINER_APP }}"
+        
+        echo "resource_group=$RG" >> $GITHUB_OUTPUT
+        echo "location=$LOCATION" >> $GITHUB_OUTPUT
+        echo "env_name=$ENV_NAME" >> $GITHUB_OUTPUT
+        echo "app_name=$APP_NAME" >> $GITHUB_OUTPUT
+        
+        # Debug output
+        echo "Resource Group: $RG"
+        echo "Location: $LOCATION"
+        echo "Environment Name: $ENV_NAME"
+        echo "App Name: $APP_NAME"
+        
+        # Verify required variables are set
+        if [ -z "$RG" ]; then
+          echo "Error: AZURE_RESOURCE_GROUP is not set"
+          exit 1
+        fi
+        
+        if [ -z "$LOCATION" ]; then
+          echo "Error: AZURE_LOCATION is not set"
+          exit 1
+        fi
+        
+    - name: Create resource group if needed
       uses: azure/CLI@v1
       with:
         inlineScript: |
-          # First, verify our variables
           RG="${{ secrets.AZURE_RESOURCE_GROUP }}"
           LOCATION="${{ secrets.AZURE_LOCATION }}"
-          ENV_NAME="${{ secrets.AZURE_CONTAINER_ENV }}"
-          APP_NAME="${{ secrets.AZURE_CONTAINER_APP }}"
-          
-          # Debug output
-          echo "Resource Group: $RG"
-          echo "Location: $LOCATION"
-          echo "Environment Name: $ENV_NAME"
-          echo "App Name: $APP_NAME"
-          
-          # Verify required variables are set
-          if [ -z "$RG" ]; then
-            echo "Error: AZURE_RESOURCE_GROUP is not set"
-            exit 1
-          fi
-          
-          if [ -z "$LOCATION" ]; then
-            echo "Error: AZURE_LOCATION is not set"
-            exit 1
-          fi
-          
-          # Get the first image tag
-          IMAGE_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -n 1)
-          echo "Using image: $IMAGE_TAG"
           
           # Check if resource group exists
           echo "Checking resource group '$RG'..."
@@ -124,6 +144,14 @@ jobs:
             echo "Creating resource group '$RG' in '$LOCATION'..."
             az group create --name "$RG" --location "$LOCATION"
           fi
+    
+    - name: Create container app environment if needed
+      uses: azure/CLI@v1
+      with:
+        inlineScript: |
+          RG="${{ secrets.AZURE_RESOURCE_GROUP }}"
+          ENV_NAME="${{ secrets.AZURE_CONTAINER_ENV }}"
+          LOCATION="${{ secrets.AZURE_LOCATION }}"
           
           # Check if container app environment exists
           echo "Checking container app environment '$ENV_NAME'..."
@@ -136,13 +164,48 @@ jobs:
               --resource-group "$RG" \
               --location "$LOCATION"
           fi
+
+  deploy:
+    name: Deploy Container App
+    needs: [build, prepare-environment]
+    runs-on: ubuntu-latest
+    environment: development
+    outputs:
+      app_url: ${{ steps.deploy.outputs.app_url }}
+      
+    steps:
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Save current image for rollback
+      id: get_current_image
+      continue-on-error: true
+      run: |
+        RG="${{ needs.prepare-environment.outputs.resource_group }}"
+        APP_NAME="${{ needs.prepare-environment.outputs.app_name }}"
+        
+        if az containerapp show --name "$APP_NAME" --resource-group "$RG" --query "properties.template.containers[0].image" -o tsv 2>/dev/null; then
+          CURRENT_IMAGE=$(az containerapp show --name "$APP_NAME" --resource-group "$RG" --query "properties.template.containers[0].image" -o tsv)
+          echo "current_image=$CURRENT_IMAGE" >> $GITHUB_OUTPUT
+          echo "Current image: $CURRENT_IMAGE"
+        else
+          echo "No current image found"
+        fi
+    
+    - name: Deploy to Azure Container App
+      id: deploy
+      uses: azure/CLI@v1
+      with:
+        inlineScript: |
+          RG="${{ needs.prepare-environment.outputs.resource_group }}"
+          ENV_NAME="${{ needs.prepare-environment.outputs.env_name }}"
+          APP_NAME="${{ needs.prepare-environment.outputs.app_name }}"
           
-          # Store current image for potential rollback
-          CURRENT_IMAGE=""
-          if az containerapp show --name "$APP_NAME" --resource-group "$RG" --query "properties.template.containers[0].image" -o tsv 2>/dev/null; then
-            CURRENT_IMAGE=$(az containerapp show --name "$APP_NAME" --resource-group "$RG" --query "properties.template.containers[0].image" -o tsv)
-            echo "Current image: $CURRENT_IMAGE"
-          fi
+          # Get the first image tag
+          IMAGE_TAG=$(echo "${{ needs.build.outputs.image_tags }}" | head -n 1)
+          echo "Using image: $IMAGE_TAG"
           
           # Check if container app exists
           echo "Checking if container app '$APP_NAME' exists..."
@@ -153,8 +216,10 @@ jobs:
               --resource-group "$RG" \
               --image "$IMAGE_TAG" \
               --set-env-vars \
-                "ENVIRONMENT=development" \
+                "ENVIRONMENT=${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}" \
                 "PORT=8080" \
+                "AZURE_STORAGE_USE_MANAGED_IDENTITY=${{ github.ref == 'refs/heads/main' && 'true' || 'false' }}" \
+                "AZURE_STORAGE_ACCOUNT_URL=${{ secrets.AZURE_STORAGE_ACCOUNT_URL }}" \
                 "AZURE_STORAGE_CONNECTION_STRING=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}" \
                 "REDIS_HOST=${{ secrets.REDIS_HOST }}" \
                 "REDIS_PORT=${{ secrets.REDIS_PORT }}" \
@@ -187,8 +252,10 @@ jobs:
               --cpu 0.5 \
               --memory 1.0Gi \
               --env-vars \
-                "ENVIRONMENT=development" \
+                "ENVIRONMENT=${{ github.ref == 'refs/heads/main' && 'production' || 'staging' }}" \
                 "PORT=8080" \
+                "AZURE_STORAGE_USE_MANAGED_IDENTITY=${{ github.ref == 'refs/heads/main' && 'true' || 'false' }}" \
+                "AZURE_STORAGE_ACCOUNT_URL=${{ secrets.AZURE_STORAGE_ACCOUNT_URL }}" \
                 "AZURE_STORAGE_CONNECTION_STRING=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}" \
                 "REDIS_HOST=${{ secrets.REDIS_HOST }}" \
                 "REDIS_PORT=${{ secrets.REDIS_PORT }}" \
@@ -207,36 +274,76 @@ jobs:
           APP_URL=$(az containerapp show --name "$APP_NAME" --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv)
           echo "Container App URL: $APP_URL"
           echo "app_url=$APP_URL" >> $GITHUB_OUTPUT
-          
+
+  verify:
+    name: Verify Deployment
+    needs: [deploy, prepare-environment]
+    runs-on: ubuntu-latest
+    environment: development
+    
+    steps:
     - name: Health check
       id: health_check
       run: |
-        APP_URL="${{ steps.deploy.outputs.app_url }}"
+        APP_URL="${{ needs.deploy.outputs.app_url }}"
         MAX_RETRIES=30
         RETRY_INTERVAL=10
         
+        # Check basic health endpoint first
+        echo "Checking basic health endpoint..."
         for i in $(seq 1 $MAX_RETRIES); do
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://$APP_URL/health")
           if [ "$HTTP_STATUS" = "200" ]; then
-            echo "Health check passed!"
-            exit 0
+            echo "Basic health check passed!"
+            break
           fi
           echo "Attempt $i/$MAX_RETRIES: Health check failed with status $HTTP_STATUS. Retrying in ${RETRY_INTERVAL}s..."
           sleep $RETRY_INTERVAL
+          
+          if [ "$i" = "$MAX_RETRIES" ]; then
+            echo "Basic health check failed after $MAX_RETRIES attempts"
+            exit 1
+          fi
         done
         
-        echo "Health check failed after $MAX_RETRIES attempts"
+        # Now check readiness endpoint
+        echo "Checking readiness endpoint..."
+        for i in $(seq 1 5); do
+          READINESS=$(curl -s "https://$APP_URL/health/readiness")
+          echo "Readiness response: $READINESS"
+          
+          if [[ "$READINESS" == *"ready"* ]]; then
+            echo "Application is ready!"
+            exit 0
+          fi
+          
+          echo "Attempt $i/5: Readiness check not successful. Retrying in ${RETRY_INTERVAL}s..."
+          sleep $RETRY_INTERVAL
+        done
+        
+        echo "Readiness check failed after 5 attempts"
         exit 1
         
     - name: Rollback on failure
-      if: failure() && steps.deploy.outcome == 'failure'
+      if: failure()
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+        
+    - name: Execute rollback
+      if: failure()
       uses: azure/CLI@v1
       with:
         inlineScript: |
-          if [ ! -z "$CURRENT_IMAGE" ]; then
-            echo "Rolling back to previous image: $CURRENT_IMAGE"
-            az containerapp update \
-              --name "${{ secrets.AZURE_CONTAINER_APP }}" \
-              --resource-group "${{ secrets.AZURE_RESOURCE_GROUP }}" \
-              --image "$CURRENT_IMAGE"
+          RG="${{ needs.prepare-environment.outputs.resource_group }}"
+          APP_NAME="${{ needs.prepare-environment.outputs.app_name }}"
+          
+          # This uses the previous working revision instead of setting a specific image
+          PREV_REVISION=$(az containerapp revision list --name "$APP_NAME" --resource-group "$RG" --query "sort_by([?active]|[0:2], &properties.creationTime)[0].name" -o tsv)
+          if [ ! -z "$PREV_REVISION" ]; then
+            echo "Rolling back to previous working revision: $PREV_REVISION"
+            az containerapp revision activate --name "$APP_NAME" --resource-group "$RG" --revision "$PREV_REVISION"
+            echo "Rollback complete"
+          else
+            echo "No previous working revision found for rollback"
           fi 
