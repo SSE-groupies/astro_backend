@@ -62,6 +62,7 @@ jobs:
         uses: docker/build-push-action@v4
         with:
           context: .
+          file: ./docker/Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
           load: ${{ github.event_name == 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
@@ -112,6 +113,7 @@ jobs:
           exit-code: '0'  # Don't fail on dockerfile issues for now
           ignore-unfixed: true
           severity: 'CRITICAL,HIGH'
+          input: './docker/Dockerfile'
         continue-on-error: true
 
   # Pre-deployment validation job
