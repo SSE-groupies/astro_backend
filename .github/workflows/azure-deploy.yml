@@ -357,12 +357,11 @@ jobs:
               --type external \
               --target-port 8080 \
               --transport auto \
-              --health-probe-path /health \
-              --health-probe-protocol http \
-              --health-probe-interval 30 \
-              --health-probe-timeout 10 \
-              --health-probe-retries 3 \
               2>/tmp/azure_error.log || log_error "Warning: Failed to update ingress configuration: $(cat /tmp/azure_error.log)"
+            
+            # Note: Health probe configuration using --health-probe-* parameters is not supported in Azure CLI 2.69.0
+            # Health probes can be configured in the Azure Portal or through ARM templates
+            # For future reference, consider updating the CLI version or using a different approach
             
             set +x # Disable command echo
           else
@@ -392,11 +391,6 @@ jobs:
                 "ADMIN_API_KEY=${{ secrets.ADMIN_API_KEY }}" \
               --ingress external \
               --target-port 8080 \
-              --health-probe-path /health \
-              --health-probe-protocol http \
-              --health-probe-interval 30 \
-              --health-probe-timeout 10 \
-              --health-probe-retries 3 \
               2>/tmp/azure_error.log || { log_error "Failed to create container app: $(cat /tmp/azure_error.log)"; exit 1; }
             
             # Then configure health probes separately for a new app
@@ -404,12 +398,10 @@ jobs:
             az containerapp ingress update \
               --name "$APP_NAME" \
               --resource-group "$RG" \
-              --health-probe-path /health \
-              --health-probe-protocol http \
-              --health-probe-interval 30 \
-              --health-probe-timeout 10 \
-              --health-probe-retries 3 \
               2>/tmp/azure_error.log || log_error "Warning: Failed to set up health probe: $(cat /tmp/azure_error.log)"
+            
+            # Note: Health probe configuration using --health-probe-* parameters is not supported in Azure CLI 2.69.0
+            # Health probes can be configured in the Azure Portal or through ARM templates
             
             set +x # Disable command echo
           fi
