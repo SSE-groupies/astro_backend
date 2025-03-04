@@ -356,11 +356,12 @@ jobs:
               --resource-group "$RG" \
               --type external \
               --target-port 8080 \
-              --probe-path /health \
-              --probe-protocol HTTP \
-              --probe-interval 30 \
-              --probe-timeout 10 \
-              --probe-retries 3 \
+              --transport auto \
+              --health-probe-path /health \
+              --health-probe-protocol http \
+              --health-probe-interval 30 \
+              --health-probe-timeout 10 \
+              --health-probe-retries 3 \
               2>/tmp/azure_error.log || log_error "Warning: Failed to update ingress configuration: $(cat /tmp/azure_error.log)"
             
             set +x # Disable command echo
@@ -391,6 +392,11 @@ jobs:
                 "ADMIN_API_KEY=${{ secrets.ADMIN_API_KEY }}" \
               --ingress external \
               --target-port 8080 \
+              --health-probe-path /health \
+              --health-probe-protocol http \
+              --health-probe-interval 30 \
+              --health-probe-timeout 10 \
+              --health-probe-retries 3 \
               2>/tmp/azure_error.log || { log_error "Failed to create container app: $(cat /tmp/azure_error.log)"; exit 1; }
             
             # Then configure health probes separately for a new app
@@ -398,11 +404,11 @@ jobs:
             az containerapp ingress update \
               --name "$APP_NAME" \
               --resource-group "$RG" \
-              --probe-path /health \
-              --probe-protocol HTTP \
-              --probe-interval 30 \
-              --probe-timeout 10 \
-              --probe-retries 3 \
+              --health-probe-path /health \
+              --health-probe-protocol http \
+              --health-probe-interval 30 \
+              --health-probe-timeout 10 \
+              --health-probe-retries 3 \
               2>/tmp/azure_error.log || log_error "Warning: Failed to set up health probe: $(cat /tmp/azure_error.log)"
             
             set +x # Disable command echo
