@@ -16,9 +16,8 @@ fastapi-cache2[redis]==0.2.2
 fastapi-limiter==0.1.6
 
 # Security
-python-jose[cryptography]==3.4.0
+PyJWT[crypto]==2.8.0
 cryptography>=42.0.0
-ecdsa==0.19.0
 
 # HTTP client
 httpx==0.25.1
