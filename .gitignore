@@ -86,3 +86,7 @@ temp/
 src/api/debug.py
 
 # Previous symlinks exceptions no longer needed as they've been moved to their respective directories
+# Node.js
+node_modules/
+package-lock.json
+package.json

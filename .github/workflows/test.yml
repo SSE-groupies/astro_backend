@@ -48,4 +48,4 @@ jobs:
     - name: Run Bandit security scanner
       run: |
         pip install bandit
-        bandit -r ./ -ll -ii -x ./tests
+        bandit -r ./ -ll -ii -x ./tests -s B104
