@@ -105,9 +105,10 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
+    host = "0.0.0.0" if settings.ENVIRONMENT != "development" else "127.0.0.1"
     uvicorn.run(
         "src.main:app",
-        host="0.0.0.0",
+        host=host,
         port=settings.PORT,
         reload=settings.DEBUG
     )
