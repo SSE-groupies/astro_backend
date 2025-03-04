@@ -326,6 +326,7 @@ jobs:
           if az containerapp show --name "$APP_NAME" --resource-group "$RG" --query "name" -o tsv 2>/dev/null; then
             echo "Updating existing container app..."
             set -x # Enable command echo for debugging
+            # First update core app configuration without ingress parameters
             az containerapp update \
               --name "$APP_NAME" \
               --resource-group "$RG" \
@@ -342,37 +343,36 @@ jobs:
                 "REDIS_SSL=true" \
                 "API_CORS_ORIGINS=${{ secrets.API_CORS_ORIGINS }}" \
                 "ADMIN_API_KEY=${{ secrets.ADMIN_API_KEY }}" \
-              --target-port 8080 \
-              --ingress external \
               --min-replicas 1 \
               --max-replicas 3 \
               --cpu 0.5 \
               --memory 1.0Gi \
               2>/tmp/azure_error.log || { log_error "Failed to update container app: $(cat /tmp/azure_error.log)"; exit 1; }
-            set +x # Disable command echo
-             
-            # Update health probe in a separate command
-            echo "Setting up health probe..."
+            
+            # Then update ingress configuration separately
+            echo "Updating ingress configuration..."
             az containerapp ingress update \
               --name "$APP_NAME" \
               --resource-group "$RG" \
+              --type external \
               --target-port 8080 \
               --probe-path /health \
               --probe-protocol HTTP \
               --probe-interval 30 \
               --probe-timeout 10 \
               --probe-retries 3 \
-              2>/tmp/azure_error.log || log_error "Warning: Failed to update health probe: $(cat /tmp/azure_error.log)"
+              2>/tmp/azure_error.log || log_error "Warning: Failed to update ingress configuration: $(cat /tmp/azure_error.log)"
+            
+            set +x # Disable command echo
           else
             echo "Creating new container app..."
             set -x # Enable command echo for debugging
+            # For new app creation, we need to create the app first
             az containerapp create \
               --name "$APP_NAME" \
               --resource-group "$RG" \
               --environment "$ENV_NAME" \
               --image "$IMAGE_TAG" \
-              --target-port 8080 \
-              --ingress external \
               --min-replicas 1 \
               --max-replicas 3 \
               --cpu 0.5 \
@@ -389,12 +389,22 @@ jobs:
                 "REDIS_SSL=true" \
                 "API_CORS_ORIGINS=${{ secrets.API_CORS_ORIGINS }}" \
                 "ADMIN_API_KEY=${{ secrets.ADMIN_API_KEY }}" \
+              --ingress external \
+              --target-port 8080 \
+              2>/tmp/azure_error.log || { log_error "Failed to create container app: $(cat /tmp/azure_error.log)"; exit 1; }
+            
+            # Then configure health probes separately for a new app
+            echo "Setting up health probe for new app..."
+            az containerapp ingress update \
+              --name "$APP_NAME" \
+              --resource-group "$RG" \
               --probe-path /health \
               --probe-protocol HTTP \
               --probe-interval 30 \
               --probe-timeout 10 \
               --probe-retries 3 \
-              2>/tmp/azure_error.log || { log_error "Failed to create container app: $(cat /tmp/azure_error.log)"; exit 1; }
+              2>/tmp/azure_error.log || log_error "Warning: Failed to set up health probe: $(cat /tmp/azure_error.log)"
+            
             set +x # Disable command echo
           fi
           
@@ -408,11 +418,17 @@ jobs:
     name: Verify Deployment
     needs: [build-and-test, deploy]
     # For PRs, only depend on build-and-test
-    if: ${{ always() && (github.event_name != 'pull_request' && needs.deploy.result == 'success' || github.event_name == 'pull_request' && needs.build-and-test.result == 'success') }}
+    if: ${{ (github.event_name != 'pull_request' && needs.deploy.result == 'success') || (github.event_name == 'pull_request' && needs.build-and-test.result == 'success') }}
     runs-on: ubuntu-latest
     environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'development' }}
     
     steps:
+    - name: Login to Azure (for non-PR builds)
+      if: github.event_name != 'pull_request'
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
     - name: Determine App URL
       id: get_app_url
       if: github.event_name != 'pull_request'
