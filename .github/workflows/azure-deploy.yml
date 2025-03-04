@@ -28,7 +28,7 @@ jobs:
       id: meta
       uses: docker/metadata-action@v4
       with:
-        images: ghcr.io/${{ github.repository_owner }}/stars-backend
+        images: ghcr.io/hillcallum/stars-backend
         tags: |
           type=ref,event=branch
           type=sha,format=short
