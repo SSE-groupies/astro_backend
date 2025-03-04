@@ -460,15 +460,25 @@ jobs:
       if: github.event_name != 'pull_request' && steps.get_app_url.outputs.app_url != 'missing'
       run: |
         APP_URL="${{ steps.get_app_url.outputs.app_url }}"
-        MAX_RETRIES=30
+        MAX_RETRIES=10
         RETRY_INTERVAL=10
         
         echo "Verifying app at URL: $APP_URL"
         
+        # Check if there's a redirection happening
+        echo "Checking for redirects on health endpoint..."
+        REDIRECT_INFO=$(curl -s -I "https://$APP_URL/health" | grep -i "location")
+        if [ -n "$REDIRECT_INFO" ]; then
+          echo "Health endpoint is redirecting: $REDIRECT_INFO"
+        else
+          echo "No redirection detected on initial check"
+        fi
+        
         # Check basic health endpoint first
         echo "Checking basic health endpoint..."
         for i in $(seq 1 $MAX_RETRIES); do
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://$APP_URL/health")
+          # Add -L flag to follow redirects
+          HTTP_STATUS=$(curl -L -s -o /dev/null -w "%{http_code}" "https://$APP_URL/health")
           if [ "$HTTP_STATUS" = "200" ]; then
             echo "Basic health check passed!"
             break
@@ -485,7 +495,8 @@ jobs:
         # Now check readiness endpoint
         echo "Checking readiness endpoint..."
         for i in $(seq 1 5); do
-          READINESS=$(curl -s "https://$APP_URL/health/readiness")
+          # Add -L flag to follow redirects
+          READINESS=$(curl -L -s "https://$APP_URL/health/readiness")
           echo "Readiness response: $READINESS"
           
           if [[ "$READINESS" == *"ready"* ]]; then
@@ -516,7 +527,7 @@ jobs:
         # Add additional functional verification here
         echo "Running post-deployment functional tests..."
         # Check the redis info endpoint
-        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://$APP_URL/health/redis")
+        HTTP_STATUS=$(curl -L -s -o /dev/null -w "%{http_code}" "https://$APP_URL/health/redis")
         if [ "$HTTP_STATUS" = "200" ]; then
           echo "Redis health check passed!"
         else
@@ -525,7 +536,7 @@ jobs:
         fi
         
         # Check the diagnostics endpoint
-        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://$APP_URL/health/diagnostics")
+        HTTP_STATUS=$(curl -L -s -o /dev/null -w "%{http_code}" "https://$APP_URL/health/diagnostics")
         echo "Diagnostics endpoint status: $HTTP_STATUS"
         
     - name: Send deployment notification
