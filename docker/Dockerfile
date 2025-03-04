@@ -45,6 +45,6 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
 CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8080"]
 
 # Add metadata
-LABEL org.opencontainers.image.source=https://github.com/hillcallum/stars_backend
+LABEL org.opencontainers.image.source=https://github.com/hillcallum/stars_backend_new
 LABEL org.opencontainers.image.description="Star Map Backend Service"
 LABEL org.opencontainers.image.licenses=MIT
