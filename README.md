@@ -330,3 +330,5 @@ evtSource.onmessage = (event) => {
 ## License
 
 [Your License]
+
+[![codecov](https://codecov.io/gh/hillcallum/stars_backend_new/branch/main/graph/badge.svg)](https://codecov.io/gh/hillcallum/stars_backend_new)
