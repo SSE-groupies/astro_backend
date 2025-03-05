@@ -75,33 +75,6 @@ jobs:
           severity: 'CRITICAL'  # Only check critical issues for non-main
         continue-on-error: true
 
-  # Non-main branch path - Simple success message only for better pipeline visualization
-  non-main-success:
-    name: Build Success
-    needs: [build-and-test]
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref != 'refs/heads/main'
-    
-    steps:
-    - name: Build success
-      run: |
-        echo "✅ Build successful for branch"
-        echo "Image tag: ${{ needs.build-and-test.outputs.image_tag }}"
-        echo "This branch has been successfully built and tested"
-
-  # Pull request path - Simple success message only
-  pr-success:
-    name: PR Success
-    needs: [build-and-test]
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    
-    steps:
-    - name: PR success
-      run: |
-        echo "✅ Pull request build successful"
-        echo "All checks have passed successfully"
-
   # MAIN BRANCH PATH - Full deployment workflow
   # ------------------------------------------
   main-pre-deployment-validation:
