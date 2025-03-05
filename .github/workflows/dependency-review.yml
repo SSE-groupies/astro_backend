@@ -2,10 +2,8 @@ name: "Dependency Review"
 
 on:
   pull_request:
+    # Only run on pull requests to main
     branches: [ main ]
-    # The branches below must be a subset of the branches above
-    types: [opened, synchronize, reopened]
-  workflow_dispatch:
 
 permissions:
   contents: read

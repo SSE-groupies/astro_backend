@@ -82,21 +82,6 @@ jobs:
         which bandit && bandit -r ./ -ll -ii -x ./tests -s B104 || echo "Skipping security scan"
       continue-on-error: true
 
-  dependency-review:
-    name: Dependency Review
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Dependency Review
-        uses: actions/dependency-review-action@v3
-        with:
-          fail-on-severity: critical
-        continue-on-error: true  # Don't fail the entire build on dependency review
-
   # Simplified summary job
   summary:
     name: Test Summary
