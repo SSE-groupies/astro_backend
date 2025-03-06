@@ -28,7 +28,7 @@ async def stream_stars(request: Request):
                     break
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=15.0)
-                    yield f"data: {event}\n\n"
+                    yield f"data: {json.dumps(event)}\n\n"  # Serialize with json.dumps
                 except asyncio.TimeoutError:
                     yield ": keep-alive\n\n"
         finally:
