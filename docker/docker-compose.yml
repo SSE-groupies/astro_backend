@@ -13,17 +13,13 @@ services:
 
   azurite:
     image: mcr.microsoft.com/azure-storage/azurite
+    container_name: docker-azurite-1
     ports:
-      - "10000:10000"  # Blob service
-      - "10001:10001"  # Queue service
-      - "10002:10002"  # Table service
-    volumes:
-      - azurite_data:/data
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "http://localhost:10002"]
-      interval: 5s
-      timeout: 10s
-      retries: 5
+      - "10000:10000"
+      - "10001:10001"
+      - "10002:10002"
+    restart: always
+
 
   api:
     build:
@@ -35,15 +31,16 @@ services:
       - REDIS_HOST=redis
       - AZURE_STORAGE_CONNECTION_STRING=DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;TableEndpoint=http://azurite:10002/devstoreaccount1;
     volumes:
-      - ./:/app
+      - ../src:/app/src
     ports:
       - "8080:8080"
     depends_on:
-      redis:
-        condition: service_healthy
-      azurite:
-        condition: service_healthy
+      - redis
+      - azurite
+    working_dir: /app
     command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8080", "--reload"]
+
+
 
 volumes:
   azurite_data:

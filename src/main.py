@@ -12,9 +12,8 @@ from src.db.redis_cache import init_redis
 
 # Import API routers
 from src.api.stars import router as stars_router
-from src.api.users import router as users_router
 from src.api.health import router as health_router
-from src.api.sse import stars_router as sse_stars_router, users_router as sse_users_router
+from src.api.sse import router as sse_stars_router
 from src.api.admin import router as admin_router
 from src.api.debug import router as debug_router
 
@@ -40,10 +39,9 @@ app.add_middleware(
 
 # Register routes
 app.include_router(stars_router, prefix="/stars", tags=["stars"])
-app.include_router(users_router, prefix="/users", tags=["users"])
+# Register users here! If you want :3
 app.include_router(health_router, prefix="/health", tags=["health"])
 app.include_router(sse_stars_router, prefix="/events/stars", tags=["events"])
-app.include_router(sse_users_router, prefix="/events/users", tags=["events"])
 app.include_router(admin_router, prefix="/admin", tags=["admin"])
 
 # Only include debug router in non-production environments

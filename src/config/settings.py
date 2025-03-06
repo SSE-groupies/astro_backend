@@ -64,7 +64,12 @@ class RedisSettings(BaseSettings):
 
 class APISettings(BaseSettings):
     CORS_ORIGINS: List[str] = Field(
-        ["http://localhost:3000"], # Default for development
+        [
+            "http://localhost:7999",
+            "http://localhost:8080",
+            "http://localhost:3000",
+            "http://localhost:8000",
+        ],
         description="List of allowed CORS origins"
     )
     RATE_LIMIT_TIMES: int = Field(5, description="Number of requests allowed in the time window")
@@ -85,29 +90,54 @@ class AppSettings(BaseSettings):
     DEBUG: bool = Field(False, description="Debug mode")
     PROJECT_NAME: str = Field("Star Map API", description="Project name")
     VERSION: str = Field("1.1.0", description="API version")
-    
+
     # Sub-settings
     AZURE: AzureStorageSettings = Field(default_factory=AzureStorageSettings)
     REDIS: RedisSettings = Field(default_factory=RedisSettings)
     LOGGING: LoggingSettings = Field(default_factory=LoggingSettings)
     API: APISettings = Field(default_factory=APISettings)
-    
+
     # Host information for diagnostics
     HOST_NAME: str = Field(default_factory=socket.gethostname)
-    
+
     @field_validator("ENVIRONMENT")
     def validate_environment(cls, v):
         allowed_environments = ["development", "staging", "production", "test"]
         if v not in allowed_environments:
             raise ValueError(f"Environment must be one of {allowed_environments}")
         return v
-        
-    model_config = SettingsConfigDict(
-        env_file=(".env", f".env.{os.getenv('ENVIRONMENT', 'development').lower()}"),
-        env_file_encoding="utf-8",
-        case_sensitive=True,
-        extra="ignore"  # Allow and ignore extra fields
-    )
+
+    def verify_required_settings(self):
+        """Verify that all required settings are present and valid at startup"""
+        critical_errors = []
+        warnings = []
+
+        # Check Azure Storage settings
+        if not self.AZURE.USE_MANAGED_IDENTITY and not self.AZURE.CONNECTION_STRING:
+            critical_errors.append(
+                "Either AZURE_STORAGE_CONNECTION_STRING must be provided or AZURE_STORAGE_USE_MANAGED_IDENTITY must be enabled"
+            )
+
+        # Check Redis settings - warn but don't fail if Redis is not configured
+        if not self.REDIS.HOST:
+            warnings.append("REDIS_HOST not configured. Caching and rate limiting will be disabled.")
+
+        # Check API settings
+        if self.ENVIRONMENT == "production" and "*" in self.API.CORS_ORIGINS:
+            warnings.append("CORS is configured to allow all origins (*) in production environment")
+
+        # Log warnings
+        for warning in warnings:
+            logger.warning(f"Configuration warning: {warning}")
+
+        # Exit on critical errors
+        if critical_errors:
+            for error in critical_errors:
+                logger.error(f"Configuration error: {error}")
+            logger.error("Application startup failed due to configuration errors")
+            import sys
+            sys.exit(1)
+
 
 # Initialize settings once - MOVED TO THE END OF THE FILE
 settings = AppSettings()
@@ -123,34 +153,36 @@ logger = logging.getLogger(__name__)
 logger.info(f"Starting application in {settings.ENVIRONMENT} environment")
 logger.info(f"Host: {settings.HOST_NAME}, Port: {settings.PORT}")
 
-# Verify critical settings
-def verify_required_settings():
-    """Verify that all required settings are present and valid at startup"""
-    critical_errors = []
-    warnings = []
+
+# !!! Commented this out and moved it into the class as it was giving import errors.
+# # Verify critical settings
+# def verify_required_settings():
+#     """Verify that all required settings are present and valid at startup"""
+#     critical_errors = []
+#     warnings = []
     
-    # Check Azure Storage settings
-    if not settings.AZURE.USE_MANAGED_IDENTITY and not settings.AZURE.CONNECTION_STRING:
-        critical_errors.append(
-            "Either AZURE_STORAGE_CONNECTION_STRING must be provided or AZURE_STORAGE_USE_MANAGED_IDENTITY must be enabled"
-        )
+#     # Check Azure Storage settings
+#     if not settings.AZURE.USE_MANAGED_IDENTITY and not settings.AZURE.CONNECTION_STRING:
+#         critical_errors.append(
+#             "Either AZURE_STORAGE_CONNECTION_STRING must be provided or AZURE_STORAGE_USE_MANAGED_IDENTITY must be enabled"
+#         )
         
-    # Check Redis settings - warn but don't fail if Redis is not configured
-    if not settings.REDIS.HOST:
-        warnings.append("REDIS_HOST not configured. Caching and rate limiting will be disabled.")
+#     # Check Redis settings - warn but don't fail if Redis is not configured
+#     if not settings.REDIS.HOST:
+#         warnings.append("REDIS_HOST not configured. Caching and rate limiting will be disabled.")
         
-    # Check API settings
-    if settings.ENVIRONMENT == "production" and "*" in settings.API.CORS_ORIGINS:
-        warnings.append("CORS is configured to allow all origins (*) in production environment")
+#     # Check API settings
+#     if settings.ENVIRONMENT == "production" and "*" in settings.API.CORS_ORIGINS:
+#         warnings.append("CORS is configured to allow all origins (*) in production environment")
             
-    # Log warnings
-    for warning in warnings:
-        logger.warning(f"Configuration warning: {warning}")
+#     # Log warnings
+#     for warning in warnings:
+#         logger.warning(f"Configuration warning: {warning}")
         
-    # Exit on critical errors
-    if critical_errors:
-        for error in critical_errors:
-            logger.error(f"Configuration error: {error}")
-        logger.error("Application startup failed due to configuration errors")
-        import sys
-        sys.exit(1)
+#     # Exit on critical errors
+#     if critical_errors:
+#         for error in critical_errors:
+#             logger.error(f"Configuration error: {error}")
+#         logger.error("Application startup failed due to configuration errors")
+#         import sys
+#         sys.exit(1)
