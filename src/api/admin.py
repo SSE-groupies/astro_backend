@@ -5,7 +5,7 @@ from fastapi.security.api_key import APIKeyHeader, APIKey
 from typing import Optional
 
 from src.db.azure_tables import tables
-from src.api.sse import star_event_queue
+from src.api.sse import connections
 from src.config.settings import settings
 
 router = APIRouter()
@@ -55,9 +55,10 @@ async def remove_all_stars():
     
     # Push SSE event
     try:
-        await star_event_queue.put({
-            "event": "remove_all"
-        })
+        for queue in connections:
+            queue.put({
+                "event": "remove_all"
+            })
     except Exception as e:
         logger.error(f"Error pushing SSE event for remove_all_stars: {str(e)}")
 

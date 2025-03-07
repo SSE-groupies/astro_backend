@@ -99,7 +99,7 @@ async def get_active_stars():
         # Return empty list instead of error for robustness
         return []
 
-async def _get_star_impl(star_id: str):
+async def _get_star_impl(star_id: str):  # Ensure star_id is str
     """Implementation of get_star without the cache decorator."""
     try:
         # Check if Redis is initialized and available
@@ -164,20 +164,16 @@ async def _get_star_impl(star_id: str):
         raise HTTPException(status_code=404, detail="Star not found")
 
 @router.get("/{star_id}")
-async def get_star(star_id: str):
+async def get_star(star_id: str):  # Ensure star_id is str
     """Get a specific star with automatic caching if available."""
     if star_id == "active":
         logger.warning("get_star was called with 'active' as the star_id, which might indicate a routing issue")
-        # This should not happen if routes are defined in the correct order
-        # Return empty list to match the expected output of get_active_stars
         return []
-        
-    # Call the implementation directly without caching if Redis is not available
     return await _get_star_impl(star_id)
 
 @router.post("/{star_id}/like")
 async def like_star(
-    star_id: str, 
+    star_id: str,  # Ensure star_id is str
     _=Depends(
         RateLimiter(
             times=settings.API.RATE_LIMIT_TIMES, 
@@ -256,9 +252,10 @@ async def add_star(star: Star):
     """Create a new star"""
     try:
         current_time = datetime.now(dt.timezone.utc).timestamp()
+        star_id = str(uuid.uuid4())  # Generate ID on the backend
         star_entity = {
             "PartitionKey": f"STAR_{datetime.now(dt.timezone.utc).strftime('%Y%m')}",
-            "RowKey": star.id or str(uuid.uuid4()),
+            "RowKey": star_id,  # Use the backend-generated ID
             "X": star.x,
             "Y": star.y,
             "Message": star.message,
@@ -268,10 +265,10 @@ async def add_star(star: Star):
         }
         tables["Stars"].create_entity(star_entity)
 
-        # Use the new publisher module
+        # Publish the create event
         try:
             await publish_star_event("create", {
-                "id": star_entity["RowKey"],
+                "id": star_id,
                 "x": star.x,
                 "y": star.y,
                 "message": star.message,
@@ -282,7 +279,7 @@ async def add_star(star: Star):
             logger.warning(f"Failed to publish event for new star: {str(e)}")
             
         return {
-            "id": star_entity["RowKey"],
+            "id": star_id,  # Return the backend-generated ID
             "x": star.x,
             "y": star.y,
             "message": star.message,
@@ -341,8 +338,8 @@ async def get_stars_batch(star_ids: str):
     return stars
 
 @router.delete("/{star_id}")
-async def remove_star(star_id: str):
-    """Remove a star by ID and push an SSE event"""
+async def remove_star(star_id: str):  # Ensure star_id is str
+    """Remove a star by ID and push an SSE event."""
     try:
         # Try to find the star across all partition keys
         star = None

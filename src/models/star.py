@@ -16,8 +16,8 @@ class Star(BaseModel):
 
     @field_validator('x', 'y')
     def validate_coordinates(cls, v):
-        if not -1 <= v <= 1:
-            raise ValueError('Coordinates must be between -1 and 1')
+        # if not -1 <= v <= 1:
+        #     raise ValueError('Coordinates must be between -1 and 1')
         return v
 
     @field_validator('message')
