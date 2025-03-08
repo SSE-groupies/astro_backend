@@ -1,3 +1,5 @@
+# star.py (backend models)
+
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, List
 from datetime import datetime
@@ -11,8 +13,9 @@ class Star(BaseModel):
     x: float
     y: float
     message: str
-    brightness: Optional[float] = 100.0
     last_liked: Optional[float] = None
+    creation_date: Optional[float] = None
+    user_id: Optional[str] = None
 
     @field_validator('x', 'y')
     def validate_coordinates(cls, v):
@@ -35,9 +38,10 @@ class Star(BaseModel):
             "X": self.x,
             "Y": self.y,
             "Message": self.message,
-            "Brightness": self.brightness,
             "LastLiked": self.last_liked or current_time,
-            "CreatedAt": current_time
+            "creationDate": self.creation_date or current_time,
+            "UserId": self.user_id
+            
         }
     
     @classmethod
@@ -48,8 +52,9 @@ class Star(BaseModel):
             x=entity["X"],
             y=entity["Y"],
             message=entity["Message"],
-            brightness=entity.get("Brightness", 100.0),
-            last_liked=entity.get("LastLiked")
+            last_liked=entity.get("LastLiked"),
+            creation_date=entity.get("creationDate"),
+            user_id=entity.get("UserId")
         )
 
 def calculate_current_brightness(base_brightness: float, last_liked: float) -> float:

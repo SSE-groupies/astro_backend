@@ -1,3 +1,4 @@
+# stars.py (backend)
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi_limiter.depends import RateLimiter
 import logging
@@ -16,6 +17,8 @@ from datetime import datetime
 import datetime as dt
 from src.api.sse_publisher import publish_star_event
 
+import time
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
@@ -32,8 +35,9 @@ async def get_stars():
         "x": star["X"],
         "y": star["Y"],
         "message": star["Message"],
-        "brightness": calculate_current_brightness(star["Brightness"], star["LastLiked"]),
-        "last_liked": star["LastLiked"]
+        "last_liked": star["LastLiked"],
+        "creation_date": star["creationDate"],
+        "user_id": star["UserId"],
     } for star in all_stars]
 
 @router.get("/active", include_in_schema=True)
@@ -70,8 +74,9 @@ async def get_active_stars():
                         "x": star["X"],
                         "y": star["Y"],
                         "message": star["Message"],
-                        "brightness": calculate_current_brightness(star["Brightness"], star["LastLiked"]),
-                        "last_liked": star["LastLiked"]
+                        "last_liked": star["LastLiked"],
+                        "creation_date": star["creationDate"],
+                        "user_id": star["UserId"]
                     })
                 except Exception as star_error:
                     logger.warning(f"Error processing star {star.get('RowKey')}: {str(star_error)}")
@@ -129,19 +134,15 @@ async def _get_star_impl(star_id: str):  # Ensure star_id is str
         if not star:
             logger.warning(f"Star with id {star_id} not found in any partition")
             raise HTTPException(status_code=404, detail="Star not found")
-            
-        current_brightness = calculate_current_brightness(
-            star["Brightness"],
-            star["LastLiked"]
-        )
         
-        response = {
+        response = { # TODO CHANGE!!!
             "id": star["RowKey"],
             "x": star["X"],
             "y": star["Y"],
             "message": star["Message"],
-            "brightness": current_brightness,
             "last_liked": star["LastLiked"],
+            "creation_date": star["creationDate"],
+            "user_id": star["UserId"],
             "is_popular": recent_likes is not None and int(recent_likes) >= settings.REDIS.POPULARITY_THRESHOLD
         }
 
@@ -199,10 +200,9 @@ async def like_star(
             logger.warning(f"Star with id {star_id} not found in any partition")
             raise HTTPException(status_code=404, detail="Star not found")
             
-        current_time = datetime.now(dt.timezone.utc).timestamp()
+        current_time = time.time() - 1735689600
         
         # Update the star's brightness and last_liked time
-        star["Brightness"] = min(100.0, star["Brightness"] + 20.0)
         star["LastLiked"] = current_time
         
         # Try to update popularity counter in Redis if available
@@ -230,7 +230,6 @@ async def like_star(
         try:
             await publish_star_event("update", {
                 "id": star_id,
-                "brightness": star["Brightness"],
                 "last_liked": current_time
             })
         except Exception as e:
@@ -238,7 +237,6 @@ async def like_star(
         
         return {
             "id": star_id,
-            "brightness": star["Brightness"],
             "last_liked": current_time
         }
     except HTTPException:
@@ -251,7 +249,7 @@ async def like_star(
 async def add_star(star: Star):
     """Create a new star"""
     try:
-        current_time = datetime.now(dt.timezone.utc).timestamp()
+        current_time = time.time() - 1735689600
         star_id = str(uuid.uuid4())  # Generate ID on the backend
         star_entity = {
             "PartitionKey": f"STAR_{datetime.now(dt.timezone.utc).strftime('%Y%m')}",
@@ -259,9 +257,9 @@ async def add_star(star: Star):
             "X": star.x,
             "Y": star.y,
             "Message": star.message,
-            "Brightness": star.brightness or 100.0,
             "LastLiked": current_time,
-            "CreatedAt": current_time
+            "creationDate": current_time,
+            "UserId": star.user_id
         }
         tables["Stars"].create_entity(star_entity)
 
@@ -271,9 +269,10 @@ async def add_star(star: Star):
                 "id": star_id,
                 "x": star.x,
                 "y": star.y,
-                "message": star.message,
-                "brightness": star.brightness or 100.0,
-                "last_liked": current_time
+                "message": None,
+                "last_liked": None,
+                "creation_date": current_time,
+                "user_id": star.user_id
             })
         except Exception as e:
             logger.warning(f"Failed to publish event for new star: {str(e)}")
@@ -283,8 +282,9 @@ async def add_star(star: Star):
             "x": star.x,
             "y": star.y,
             "message": star.message,
-            "brightness": star.brightness or 100.0,
-            "last_liked": current_time
+            "last_liked": current_time,
+            "creation_date": current_time,
+            "user_id": star.user_id
         }
     except Exception as e:
         logger.error(f"Error creating star: {str(e)}")
@@ -317,7 +317,7 @@ async def get_popular_stars():
                 except HTTPException:
                     continue
                 
-        return sorted(popular_stars, key=lambda x: x["brightness"], reverse=True)
+        return sorted(popular_stars, key=lambda x: x["creation_date"], reverse=True)
     except Exception as e:
         logger.error(f"Error getting popular stars: {str(e)}")
         return popular_stars
@@ -337,7 +337,7 @@ async def get_stars_batch(star_ids: str):
     
     return stars
 
-@router.delete("/{star_id}")
+@router.delete("/{star_id}") # TODO NEEDS TO BE FULLY IMPLEMENTED !!! 
 async def remove_star(star_id: str):  # Ensure star_id is str
     """Remove a star by ID and push an SSE event."""
     try:
@@ -357,7 +357,7 @@ async def remove_star(star_id: str):  # Ensure star_id is str
 
         # Use the new publisher module
         try:
-            await publish_star_event("delete", {
+            await publish_star_event("delete", { # TODO ??!?!?!!??!
                 "id": star_id,
                 "x": star.get("X"),
                 "y": star.get("Y"),
