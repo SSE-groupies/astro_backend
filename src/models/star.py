@@ -22,7 +22,7 @@ class Star(BaseModel):
 
     @field_validator('message')
     def validate_message(cls, v):
-        if len(v) > 280:  # Twitter-style limit
+        if len(v) > 256:  # Twitter-style limit
             raise ValueError('Message too long')
         return v
         
