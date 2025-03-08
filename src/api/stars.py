@@ -270,7 +270,7 @@ async def add_star(star: Star):
                 "x": star.x,
                 "y": star.y,
                 "message": None,
-                "last_liked": None,
+                "last_liked": current_time,
                 "creation_date": current_time,
                 "user_id": star.user_id
             })
