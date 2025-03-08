@@ -8,7 +8,7 @@ import math
 import uuid
 
 from src.config.settings import settings
-from src.models.star import Star, calculate_current_brightness
+from src.models.star import Star#, calculate_current_brightness
 from src.db.azure_tables import tables
 from src.db.redis_cache import is_cache_initialized
 from src.dependencies.providers import get_redis, get_table_storage
@@ -38,6 +38,7 @@ async def get_stars():
         "last_liked": star["LastLiked"],
         "creation_date": star["creationDate"],
         "user_id": star["UserId"],
+        "username": star["Username"]
     } for star in all_stars]
 
 @router.get("/active", include_in_schema=True)
@@ -76,7 +77,8 @@ async def get_active_stars():
                         "message": star["Message"],
                         "last_liked": star["LastLiked"],
                         "creation_date": star["creationDate"],
-                        "user_id": star["UserId"]
+                        "user_id": star["UserId"],
+                        "username": star["Username"]
                     })
                 except Exception as star_error:
                     logger.warning(f"Error processing star {star.get('RowKey')}: {str(star_error)}")
@@ -143,6 +145,7 @@ async def _get_star_impl(star_id: str):  # Ensure star_id is str
             "last_liked": star["LastLiked"],
             "creation_date": star["creationDate"],
             "user_id": star["UserId"],
+            "username": star["Username"],
             "is_popular": recent_likes is not None and int(recent_likes) >= settings.REDIS.POPULARITY_THRESHOLD
         }
 
@@ -259,7 +262,8 @@ async def add_star(star: Star):
             "Message": star.message,
             "LastLiked": current_time,
             "creationDate": current_time,
-            "UserId": star.user_id
+            "UserId": star.user_id,
+            "Username": star.username
         }
         tables["Stars"].create_entity(star_entity)
 
@@ -272,7 +276,8 @@ async def add_star(star: Star):
                 "message": None,
                 "last_liked": current_time,
                 "creation_date": current_time,
-                "user_id": star.user_id
+                "user_id": star.user_id,
+                "username": None
             })
         except Exception as e:
             logger.warning(f"Failed to publish event for new star: {str(e)}")
@@ -284,7 +289,8 @@ async def add_star(star: Star):
             "message": star.message,
             "last_liked": current_time,
             "creation_date": current_time,
-            "user_id": star.user_id
+            "user_id": star.user_id,
+            "username": star.username
         }
     except Exception as e:
         logger.error(f"Error creating star: {str(e)}")
@@ -373,8 +379,8 @@ async def remove_star(star_id: str):  # Ensure star_id is str
         logger.error(f"Error removing star: {str(e)}")
         raise HTTPException(status_code=500, detail="Error removing star")
 
-def calculate_current_brightness(base_brightness: float, last_liked: float) -> float:
-    """Calculate the current brightness of a star based on time since last liked"""
-    time_since_liked = datetime.now(dt.timezone.utc).timestamp() - last_liked
-    decay_factor = max(0.01, 1.0 - 0.01 * time_since_liked)
-    return max(20.0, base_brightness * math.exp(-decay_factor * time_since_liked))
+# def calculate_current_brightness(base_brightness: float, last_liked: float) -> float:
+#     """Calculate the current brightness of a star based on time since last liked"""
+#     time_since_liked = datetime.now(dt.timezone.utc).timestamp() - last_liked
+#     decay_factor = max(0.01, 1.0 - 0.01 * time_since_liked)
+#     return max(20.0, base_brightness * math.exp(-decay_factor * time_since_liked))

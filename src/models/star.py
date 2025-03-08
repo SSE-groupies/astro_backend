@@ -16,6 +16,7 @@ class Star(BaseModel):
     last_liked: Optional[float] = None
     creation_date: Optional[float] = None
     user_id: Optional[str] = None
+    username: Optional[str] = None
 
     @field_validator('x', 'y')
     def validate_coordinates(cls, v):
@@ -40,8 +41,8 @@ class Star(BaseModel):
             "Message": self.message,
             "LastLiked": self.last_liked or current_time,
             "creationDate": self.creation_date or current_time,
-            "UserId": self.user_id
-            
+            "UserId": self.user_id,
+            "Username": self.username
         }
     
     @classmethod
@@ -54,11 +55,12 @@ class Star(BaseModel):
             message=entity["Message"],
             last_liked=entity.get("LastLiked"),
             creation_date=entity.get("creationDate"),
-            user_id=entity.get("UserId")
+            user_id=entity.get("UserId"),
+            username=entity.get("Username")
         )
 
-def calculate_current_brightness(base_brightness: float, last_liked: float) -> float:
-    """Calculate the current brightness based on time decay"""
-    time_since_liked = datetime.now(dt.timezone.utc).timestamp() - last_liked
-    decay_factor = max(0.01, 1.0 - 0.01 * time_since_liked)
-    return max(20.0, base_brightness * math.exp(-decay_factor * time_since_liked))
+# def calculate_current_brightness(base_brightness: float, last_liked: float) -> float:
+#     """Calculate the current brightness based on time decay"""
+#     time_since_liked = datetime.now(dt.timezone.utc).timestamp() - last_liked
+#     decay_factor = max(0.01, 1.0 - 0.01 * time_since_liked)
+#     return max(20.0, base_brightness * math.exp(-decay_factor * time_since_liked))
