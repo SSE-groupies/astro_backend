@@ -1,3 +1,4 @@
+import asyncio
 import contextlib
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +10,7 @@ import platform
 from src.config.settings import settings
 from src.db.azure_tables import init_tables
 from src.db.redis_cache import init_redis
+from src.tasks.gc_stars import delete_old_stars
 
 # Import API routers
 from src.api.stars import router as stars_router
@@ -55,37 +57,27 @@ async def lifespan(app: FastAPI):
     # Startup actions
     try:
         logger.info(f"Starting up {settings.PROJECT_NAME} v{settings.VERSION}")
-        logger.info(f"Environment: {settings.ENVIRONMENT}")
         
-        # Log Azure-specific information if in Azure environment
-        hostname = socket.gethostname()
-        if os.environ.get("WEBSITE_SITE_NAME") or os.environ.get("CONTAINER_APP_NAME"):
-            logger.info(f"Running in Azure environment")
-            logger.info(f"Container hostname: {hostname}")
-            logger.info(f"Python version: {platform.python_version()}")
-            logger.info(f"Platform: {platform.platform()}")
-        
-        # Initialize tables
+        # Initialize database and services
         init_tables()
-        
-        # Initialize Redis
         await init_redis()
-        
+
         # Verify required settings
         settings.verify_required_settings()
         
+        # Start background garbage collection task
+        asyncio.create_task(delete_old_stars())
+
         logger.info("Initialization complete")
+
     except Exception as e:
         logger.error(f"Error during startup: {str(e)}")
-        # Continue startup even if there are issues - health checks will report the problems
-    
+
     yield
-    
+
     # Shutdown actions
     logger.info("Shutting down application...")
-    
-    # Perform cleanup here
-    logger.info("Cleanup complete")
+
 
 # Apply the lifespan handler
 app.router.lifespan_context = lifespan
