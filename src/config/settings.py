@@ -63,12 +63,9 @@ class RedisSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="REDIS_")
 
 class APISettings(BaseSettings):
-    CORS_ORIGINS: List[str] = Field(
+    CORS_ORIGINS: List[str] = Field( # TODO CHANGE THIS!!!
         [
-            "http://localhost:7999",
-            "http://localhost:8080",
-            "http://localhost:3000",
-            "http://localhost:8000",
+            "*"
         ],
         description="List of allowed CORS origins"
     )
