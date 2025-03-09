@@ -178,12 +178,6 @@ async def get_star(star_id: str):  # Ensure star_id is str
 @router.post("/{star_id}/like")
 async def like_star(
     star_id: str,  # Ensure star_id is str
-    _=Depends(
-        RateLimiter(
-            times=settings.API.RATE_LIMIT_TIMES, 
-            seconds=settings.API.RATE_LIMIT_SECONDS
-        ) if settings.ENVIRONMENT != "test" else None
-    )
 ):
     """Like a star and update popularity metrics."""
     try:
@@ -208,6 +202,77 @@ async def like_star(
         # Update the star's brightness and last_liked time
         try:
             star["LastLiked"] =min(star["LastLiked"] + 3600 , current_time)
+        except Exception as e:
+            logger.error(f"Error updating star {star_id}: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error updating star")
+
+        # Try to update popularity counter in Redis if available
+        try:
+            if is_cache_initialized():
+                redis = FastAPICache.get_backend().client
+                popularity_key = f"star_popularity:{star_id}"
+                
+                # Increment likes counter with expiry
+                await redis.incr(popularity_key)
+                await redis.expire(popularity_key, settings.REDIS.POPULARITY_WINDOW)
+                
+                # Try to invalidate the star's cache to force refresh
+                try:
+                    await FastAPICache.get_backend().delete(f"star:{star_id}")
+                except Exception as cache_error:
+                    logger.warning(f"Failed to invalidate cache for star {star_id}: {str(cache_error)}")
+        except Exception as redis_error:
+            logger.warning(f"Redis error during like operation for star {star_id}: {str(redis_error)}")
+            # Continue without Redis functionality
+
+        tables["Stars"].update_entity(star)
+        
+        # Use the new publisher module
+        try:
+            await publish_star_event("update", {
+                "id": star_id,
+                "last_liked": star["LastLiked"]
+            })
+        except Exception as e:
+            logger.warning(f"Failed to publish event for star {star_id}: {str(e)}")
+        
+        return {
+            "id": star_id,
+            "last_liked": star["LastLiked"]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error liking star {star_id}: {str(e)}")
+        raise HTTPException(status_code=404, detail="Star not found")
+
+@router.post("/{star_id}/dislike")
+async def dislike_star(
+    star_id: str,  # Ensure star_id is str
+):
+    """Like a star and update popularity metrics."""
+    try:
+        logger.info(f"Liking star with id: {star_id}")
+        
+        # Try to find the star across all partition keys
+        star = None
+        all_entities = list(tables["Stars"].list_entities())
+        
+        for entity in all_entities: # TODO maybe this should be a more efficient search
+            if entity.get("RowKey") == star_id:
+                star = entity
+                logger.info(f"Found star to like with PartitionKey: {star.get('PartitionKey')}")
+                break
+                
+        if not star:
+            logger.warning(f"Star with id {star_id} not found in any partition")
+            raise HTTPException(status_code=404, detail="Star not found")
+            
+        current_time = time.time() - 1735689600
+        
+        # Update the star's brightness and last_liked time
+        try:
+            star["LastLiked"] = (star["LastLiked"] - 3600)
         except Exception as e:
             logger.error(f"Error updating star {star_id}: {str(e)}")
             raise HTTPException(status_code=500, detail="Error updating star")
