@@ -193,7 +193,7 @@ async def like_star(
         star = None
         all_entities = list(tables["Stars"].list_entities())
         
-        for entity in all_entities:
+        for entity in all_entities: # TODO maybe this should be a more efficient search
             if entity.get("RowKey") == star_id:
                 star = entity
                 logger.info(f"Found star to like with PartitionKey: {star.get('PartitionKey')}")
@@ -206,8 +206,12 @@ async def like_star(
         current_time = time.time() - 1735689600
         
         # Update the star's brightness and last_liked time
-        star["LastLiked"] = current_time
-        
+        try:
+            star["LastLiked"] =min(star["LastLiked"] + 3600 , current_time)
+        except Exception as e:
+            logger.error(f"Error updating star {star_id}: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error updating star")
+
         # Try to update popularity counter in Redis if available
         try:
             if is_cache_initialized():
@@ -233,14 +237,14 @@ async def like_star(
         try:
             await publish_star_event("update", {
                 "id": star_id,
-                "last_liked": current_time
+                "last_liked": star["LastLiked"]
             })
         except Exception as e:
             logger.warning(f"Failed to publish event for star {star_id}: {str(e)}")
         
         return {
             "id": star_id,
-            "last_liked": current_time
+            "last_liked": star["LastLiked"]
         }
     except HTTPException:
         raise
