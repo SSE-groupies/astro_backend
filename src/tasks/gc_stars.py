@@ -28,4 +28,4 @@ async def delete_old_stars():
         except Exception as e:
             logger.error(f"Error in garbage collection: {str(e)}")
 
-        await asyncio.sleep(1)  # Run every hour
+        await asyncio.sleep(300)  # Run every hour
