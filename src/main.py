@@ -10,7 +10,7 @@ import platform
 from src.config.settings import settings
 from src.db.azure_tables import init_tables
 from src.db.redis_cache import init_redis
-from src.tasks.gc_stars import delete_old_stars
+# from src.tasks.gc_stars import delete_old_stars
 
 # Import API routers
 from src.api.stars import router as stars_router
@@ -66,7 +66,7 @@ async def lifespan(app: FastAPI):
         settings.verify_required_settings()
         
         # Start background garbage collection task
-        asyncio.create_task(delete_old_stars())
+        # asyncio.create_task(delete_old_stars())
 
         logger.info("Initialization complete")
 
