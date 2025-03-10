@@ -14,10 +14,10 @@ logger = logging.getLogger(__name__)
 
 async def publish_star_event(event_type: str, data: Dict[str, Any]) -> None:
     """
-    Publish an event to the star event queue.
+    Publish an event to all SSE queues.
     
     Args:
-        event_type: Type of event (e.g., 'create', 'update', 'delete')
+        event_type: Type of event ('create', 'update', 'delete')
         data: Event data containing star information
     """
     event = {
@@ -26,10 +26,13 @@ async def publish_star_event(event_type: str, data: Dict[str, Any]) -> None:
     }
     
     try:
+        tasks = []
         for queue in connections:
-            queue.put_nowait(event)
+            tasks.append(queue.put(event))  # Use awaitable put()
+
+        # Ensure all tasks are completed before continuing
+        await asyncio.gather(*tasks)
+
         logger.debug(f"Published star event: {event_type}")
     except Exception as e:
         logger.error(f"Failed to publish star event: {str(e)}")
-
-
